@@ -1,5 +1,8 @@
 # USB Boot Maker
 
+[![Download USB-Boot-Maker.bat](https://img.shields.io/badge/Download-USB--Boot--Maker.bat-2ea44f?style=for-the-badge)](https://github.com/astrom2/usb-boot-maker/releases/latest/download/USB-Boot-Maker.bat)
+[![Latest release](https://img.shields.io/github/v/release/astrom2/usb-boot-maker?style=for-the-badge)](https://github.com/astrom2/usb-boot-maker/releases/latest)
+
 A single-file Windows tool for making a bootable USB from an ISO or IMG image, either Windows (including Windows Server) or Linux. You don't install anything. Download one file and run it.
 
 <div dir="rtl">
@@ -17,7 +20,7 @@ A single-file Windows tool for making a bootable USB from an ISO or IMG image, e
 - تطلب تأكيد قبل ما تمسح أي شي، وتتحقق مرة ثانية أن القرص USB وأنه مو قرص النظام.
 
 **طريقة الاستخدام:**
-1. نزّل ملف [`USB-Boot-Maker.bat`](USB-Boot-Maker.bat).
+1. نزّل البرنامج من الرابط: **[تحميل USB-Boot-Maker.bat](https://github.com/astrom2/usb-boot-maker/releases/latest/download/USB-Boot-Maker.bat)**. الرابط يجيب دائماً آخر إصدار.
 2. اضغط عليه مرتين، أو اسحب ملف ISO وأفلته على أيقونته.
 3. اختر الصورة والفلاشة وطريقة الحرق، ثم اضغط **START** ووافق على صلاحية المسؤول.
 
@@ -39,7 +42,7 @@ A single-file Windows tool for making a bootable USB from an ISO or IMG image, e
 - The tool asks for confirmation before erasing anything. Right before writing, it re-checks that the target is a USB disk, that it is not the system disk, and that it is still the same drive you selected.
 
 ### Usage
-1. Download [`USB-Boot-Maker.bat`](USB-Boot-Maker.bat).
+1. Download **[USB-Boot-Maker.bat](https://github.com/astrom2/usb-boot-maker/releases/latest/download/USB-Boot-Maker.bat)**. The link always points to the latest release.
 2. Double-click it, or drop an ISO/IMG file onto its icon.
 3. Choose the image, the USB drive and the write mode, click **START**, then accept the Administrator (UAC) prompt.
 

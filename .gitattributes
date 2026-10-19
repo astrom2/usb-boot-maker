@@ -1,0 +1,2 @@
+# Keep the batch file exactly as written (CRLF line endings), so a raw download runs correctly in cmd.exe
+*.bat -text

@@ -13,9 +13,9 @@ exit /b
   Double-click the file to open the window, or drop an ISO/IMG file onto its icon.
 
   Makes a bootable USB from an image file:
-    - Windows / Windows Server ISO -> "Windows" mode: the USB is formatted
-      (FAT32 or NTFS) and the ISO files are copied (install.wim is split
-      automatically on FAT32).
+    - Windows / Windows Server ISO -> "Windows" mode: the USB is partitioned
+      (MBR or GPT), formatted (FAT32 or NTFS) and the ISO files are copied
+      (install.wim is split automatically on FAT32).
     - Linux ISO or raw .img        -> "DD" mode: the image is written raw to
       the USB, sector by sector (same as Rufus "DD mode" or balenaEtcher).
 
@@ -32,6 +32,7 @@ param(
     [int]$DiskNumber = -1,
     [ValidateSet("Windows", "DD")][string]$Mode = "Windows",
     [ValidateSet("FAT32", "NTFS")][string]$FileSystem = "FAT32",
+    [ValidateSet("MBR", "GPT")][string]$PartitionScheme = "MBR",
     [string]$Label = "WINSERVER",
     [long]$DiskSize = 0
 )
@@ -229,7 +230,11 @@ public static class RawDisk
         }
         else {
             # ================= Windows mode =================
-            Write-Host "Mode   : Windows - $FileSystem (label $Label)"
+            Write-Host "Mode   : Windows - $PartitionScheme / $FileSystem (label $Label)"
+            $isGpt = ($PartitionScheme -eq "GPT")
+            if ($isGpt -and $FileSystem -eq "NTFS") {
+                throw "GPT needs FAT32: UEFI firmware can't boot from NTFS. Choose FAT32, or MBR for NTFS."
+            }
 
             $partSizeArg = ""
             $partBytes = $disk.Size
@@ -256,16 +261,21 @@ public static class RawDisk
             }
             Write-Host "ISO mounted as $src"
 
-            # --- 2) Wipe + partition (MBR) + format ---
-            Step "Wiping and formatting Disk $DiskNumber as $FileSystem..."
-            Invoke-DiskPart @(
-                "select disk $DiskNumber"
-                "clean"
-                "convert mbr"
-                "create partition primary$partSizeArg"
-                "format fs=$($FileSystem.ToLower()) quick label=$Label"
-                "assign"
-            )
+            # --- 2) Wipe + partition (MBR or GPT) + format ---
+            Step "Wiping Disk $DiskNumber and formatting it as $PartitionScheme / $FileSystem..."
+            try {
+                Invoke-DiskPart @(
+                    "select disk $DiskNumber"
+                    "clean"
+                    "convert $($PartitionScheme.ToLower())"
+                    "create partition primary$partSizeArg"
+                    "format fs=$($FileSystem.ToLower()) quick label=$Label"
+                    "assign"
+                )
+            } catch {
+                if ($isGpt) { throw "$($_.Exception.Message) This USB may not accept GPT - try MBR instead." }
+                throw
+            }
 
             for ($i = 0; $i -lt 15 -and -not $usb; $i++) {
                 Start-Sleep -Seconds 1
@@ -277,8 +287,10 @@ public static class RawDisk
             if (-not $usb) { throw "Could not get a drive letter for the USB." }
             Write-Host "USB formatted as $usb"
 
-            try { Set-Partition -DriveLetter $usb[0] -IsActive $true -ErrorAction Stop }
-            catch { Write-Host "Note: could not mark the partition active (only matters for Legacy BIOS)." -ForegroundColor Yellow }
+            if (-not $isGpt) {
+                try { Set-Partition -DriveLetter $usb[0] -IsActive $true -ErrorAction Stop }
+                catch { Write-Host "Note: could not mark the partition active (only matters for Legacy BIOS)." -ForegroundColor Yellow }
+            }
 
             # --- 3) Copy files ---
             $wim = Get-Item "$src\sources\install.wim" -ErrorAction SilentlyContinue
@@ -299,11 +311,18 @@ public static class RawDisk
                 if ($LASTEXITCODE -ne 0) { throw "DISM split failed (code $LASTEXITCODE)." }
             }
 
-            # --- 5) Boot code for Legacy BIOS ---
-            Step "Writing boot code..."
-            & "$src\boot\bootsect.exe" /nt60 $usb /mbr /force
-            if ($LASTEXITCODE -ne 0) {
-                Write-Host "bootsect returned code $LASTEXITCODE (only matters for Legacy BIOS)." -ForegroundColor Yellow
+            # --- 5) Boot code for Legacy BIOS (MBR only - GPT boots through UEFI's \EFI\BOOT) ---
+            if (-not $isGpt) {
+                Step "Writing boot code..."
+                & "$src\boot\bootsect.exe" /nt60 $usb /mbr /force
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Host "bootsect returned code $LASTEXITCODE (only matters for Legacy BIOS)." -ForegroundColor Yellow
+                }
+            }
+            if (-not (Test-Path "$usb\efi\boot\bootx64.efi")) {
+                $note = "Note: this ISO has no UEFI boot file (efi\boot\bootx64.efi): it will only boot in Legacy BIOS."
+                if ($isGpt) { $note += " Use MBR for this ISO." }
+                Write-Host $note -ForegroundColor Yellow
             }
 
             $ok = $true
@@ -328,7 +347,9 @@ public static class RawDisk
             Write-Host "It's normal that Windows can't open the USB now: it holds Linux partitions."
         } else {
             Write-Host "`nDONE! The USB ($usb) is ready." -ForegroundColor Green
-            if ($FileSystem -eq "FAT32") {
+            if ($PartitionScheme -eq "GPT") {
+                Write-Host "GPT: boots in UEFI mode only. In the BIOS boot menu pick the 'UEFI: ...' entry for the USB."
+            } elseif ($FileSystem -eq "FAT32") {
                 Write-Host "Boots in UEFI mode (and Legacy BIOS on most machines)."
             } else {
                 Write-Host "Boots in Legacy BIOS / CSM mode. UEFI-only servers may not see it - use FAT32 instead." -ForegroundColor Yellow
@@ -400,7 +421,7 @@ $bold    = New-Object Drawing.Font("Segoe UI", 10, [Drawing.FontStyle]::Bold)
 
 $form = New-Object Windows.Forms.Form
 $form.Text = "USB Boot Maker  -  Windows & Linux"
-$form.ClientSize = New-Object Drawing.Size(520, 550)
+$form.ClientSize = New-Object Drawing.Size(520, 612)
 $form.FormBorderStyle = "FixedDialog"
 $form.MaximizeBox = $false
 $form.StartPosition = "CenterScreen"
@@ -491,28 +512,38 @@ $grpWin = New-Object Windows.Forms.GroupBox
 $grpWin.Text = "4) Windows options"
 $grpWin.Font = $bold
 $grpWin.Location = New-Object Drawing.Point(15, 342)
-$grpWin.Size = New-Object Drawing.Size(490, 112)
+$grpWin.Size = New-Object Drawing.Size(490, 174)
 $form.Controls.Add($grpWin)
 
-$rbFat = New-Object Windows.Forms.RadioButton
-$rbFat.Text = "FAT32  -  UEFI + Legacy BIOS  (recommended)"
-$rbFat.Font = $regular
-$rbFat.Location = New-Object Drawing.Point(15, 24)
-$rbFat.AutoSize = $true
-$rbFat.Checked = $true
-$grpWin.Controls.Add($rbFat)
+# Each pair of radio buttons sits in its own panel so the two choices are independent
+function New-RadioPair($parent, $y, $caption, $textA, $textB) {
+    [void](New-Label $caption 15 $y $regular ([Drawing.Color]::DimGray) $parent)
+    $p = New-Object Windows.Forms.Panel
+    $p.Location = New-Object Drawing.Point(130, ($y - 4))
+    $p.Size = New-Object Drawing.Size(350, 52)
+    $parent.Controls.Add($p)
+    $a = New-Object Windows.Forms.RadioButton
+    $a.Text = $textA; $a.Font = $regular; $a.AutoSize = $true; $a.Checked = $true
+    $a.Location = New-Object Drawing.Point(0, 2)
+    $b = New-Object Windows.Forms.RadioButton
+    $b.Text = $textB; $b.Font = $regular; $b.AutoSize = $true
+    $b.Location = New-Object Drawing.Point(0, 27)
+    $p.Controls.Add($a); $p.Controls.Add($b)
+    return @($a, $b)
+}
 
-$rbNtfs = New-Object Windows.Forms.RadioButton
-$rbNtfs.Text = "NTFS   -  Legacy BIOS / CSM only"
-$rbNtfs.Font = $regular
-$rbNtfs.Location = New-Object Drawing.Point(15, 50)
-$rbNtfs.AutoSize = $true
-$grpWin.Controls.Add($rbNtfs)
+$rbMbr, $rbGpt = New-RadioPair $grpWin 26 "Partition scheme:" `
+    "MBR  -  BIOS (Legacy) + UEFI  (recommended)" `
+    "GPT  -  UEFI only  (FAT32)"
 
-[void](New-Label "Volume label:" 15 82 $regular $null $grpWin)
+$rbFat, $rbNtfs = New-RadioPair $grpWin 84 "File system:" `
+    "FAT32  -  UEFI + Legacy BIOS  (recommended)" `
+    "NTFS   -  Legacy BIOS / CSM only  (MBR)"
+
+[void](New-Label "Volume label:" 15 142 $regular ([Drawing.Color]::DimGray) $grpWin)
 $txtLabel = New-Object Windows.Forms.TextBox
 $txtLabel.Font = $regular
-$txtLabel.Location = New-Object Drawing.Point(120, 79)
+$txtLabel.Location = New-Object Drawing.Point(130, 139)
 $txtLabel.Size = New-Object Drawing.Size(150, 26)
 $txtLabel.MaxLength = 11
 $txtLabel.CharacterCasing = "Upper"
@@ -523,11 +554,11 @@ $grpWin.Controls.Add($txtLabel)
 $btnStart = New-Object Windows.Forms.Button
 $btnStart.Text = "START  (erase USB and write image)"
 $btnStart.Font = $bold
-$btnStart.Location = New-Object Drawing.Point(15, 466)
+$btnStart.Location = New-Object Drawing.Point(15, 528)
 $btnStart.Size = New-Object Drawing.Size(490, 45)
 $form.Controls.Add($btnStart)
 
-$status = New-Label "" 15 522 $null ([Drawing.Color]::DimGray)
+$status = New-Label "" 15 584 $null ([Drawing.Color]::DimGray)
 
 # ---------- Logic ----------
 function Set-Iso([string]$path) {
@@ -597,6 +628,12 @@ foreach ($c in @($form, $dropPanel, $dropText)) {
 
 $rbModeWin.Add_CheckedChanged({ $grpWin.Enabled = $rbModeWin.Checked })
 
+# GPT means UEFI, and UEFI firmware boots from FAT32 only
+$rbGpt.Add_CheckedChanged({
+    if ($rbGpt.Checked) { $rbFat.Checked = $true }
+    $rbNtfs.Enabled = -not $rbGpt.Checked
+})
+
 $btnBrowse.Add_Click({
     $dlg = New-Object Windows.Forms.OpenFileDialog
     $dlg.Filter = "Disk images (*.iso;*.img)|*.iso;*.img"
@@ -636,9 +673,10 @@ $btnStart.Add_Click({
     }
 
     $fs       = if ($rbNtfs.Checked) { "NTFS" } else { "FAT32" }
+    $scheme   = if ($rbGpt.Checked) { "GPT" } else { "MBR" }
     $label    = Get-CleanLabel $txtLabel.Text
     $modeArg  = if ($isDD) { "DD" } else { "Windows" }
-    $modeText = if ($isDD) { "DD - raw image write" } else { "Windows - $fs, label $label" }
+    $modeText = if ($isDD) { "DD - raw image write" } else { "Windows - $scheme, $fs, label $label" }
 
     $msg = "ALL DATA on this USB drive will be ERASED:`n`n" +
            ("Disk {0}  -  {1}  -  {2:N1} GB`n`n" -f $d.Number, $d.Name, ($d.Size / 1GB)) +
@@ -649,7 +687,7 @@ $btnStart.Add_Click({
 
     $isoArg     = $script:isoPath -replace "'", "''"
     $workerArgs = "-Worker -IsoPath '$isoArg' -DiskNumber $($d.Number) -Mode $modeArg " +
-                  "-FileSystem $fs -Label '$label' -DiskSize $($d.Size)"
+                  "-FileSystem $fs -PartitionScheme $scheme -Label '$label' -DiskSize $($d.Size)"
     $argList    = "-NoProfile -ExecutionPolicy Bypass -Command `"$(Get-SelfCommand $workerArgs)`""
     try {
         Start-Process powershell.exe -Verb RunAs -ArgumentList $argList -ErrorAction Stop

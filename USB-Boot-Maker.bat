@@ -33,7 +33,7 @@ param(
     [ValidateSet("Windows", "DD")][string]$Mode = "Windows",
     [ValidateSet("FAT32", "NTFS")][string]$FileSystem = "FAT32",
     [ValidateSet("MBR", "GPT")][string]$PartitionScheme = "MBR",
-    [string]$Label = "WINSERVER",
+    [string]$Label = "WINUSB",
     [long]$DiskSize = 0
 )
 
@@ -51,9 +51,33 @@ function Test-Admin {
 
 function Get-CleanLabel([string]$text) {
     $t = ($text -replace '[^A-Za-z0-9_-]', '').ToUpper()
-    if (-not $t) { $t = "WINSERVER" }
+    if (-not $t) { $t = "WINUSB" }
     if ($t.Length -gt 11) { $t = $t.Substring(0, 11) }
     return $t
+}
+
+# Suggests a USB volume label from the ISO file name and its ISO 9660 volume name
+# (e.g. Win11_24H2_English_x64.iso -> WIN11, SERVER_EVAL_x64FRE_en-us.iso -> WINSERVER)
+function Get-SuggestedLabel([string]$path) {
+    $volume = ""
+    try {
+        $fs = [IO.File]::OpenRead($path)
+        try {
+            $pvd = New-Object byte[] 2048
+            $fs.Position = 0x8000                       # sector 16: primary volume descriptor
+            if ($fs.Read($pvd, 0, 2048) -eq 2048 -and [Text.Encoding]::ASCII.GetString($pvd, 1, 5) -eq 'CD001') {
+                $volume = [Text.Encoding]::ASCII.GetString($pvd, 40, 32).Trim()
+            }
+        } finally { $fs.Dispose() }
+    } catch { }
+
+    $name = ([IO.Path]::GetFileNameWithoutExtension($path) + " " + $volume).ToUpper()
+    $flat = $name -replace '[^A-Z0-9]', ''
+    if ($flat -match 'SERVER' -or $volume -match '^SSS_') { return "WINSERVER" }
+    if ($flat -match 'WIN(DOWS)?11') { return "WIN11" }
+    if ($flat -match 'WIN(DOWS)?10') { return "WIN10" }
+    if ($volume -match '^(CCCOMA|CCSA|CPBA|CENA)_') { return "WINDOWS" }
+    return "WINUSB"
 }
 
 # PowerShell command that re-runs this same file with the given arguments
@@ -547,7 +571,7 @@ $txtLabel.Location = New-Object Drawing.Point(130, 139)
 $txtLabel.Size = New-Object Drawing.Size(150, 26)
 $txtLabel.MaxLength = 11
 $txtLabel.CharacterCasing = "Upper"
-$txtLabel.Text = "WINSERVER"
+$txtLabel.Text = "WINUSB"   # filled in automatically when an ISO is chosen
 $grpWin.Controls.Add($txtLabel)
 
 # Start
@@ -573,6 +597,7 @@ function Set-Iso([string]$path) {
             $lblKind.Text = "Detected: Windows ISO  ->  Windows mode"
             $rbModeWin.Enabled = $true
             $rbModeWin.Checked = $true
+            $txtLabel.Text = Get-SuggestedLabel $path
         }
         'Hybrid' {
             $lblKind.Text = "Detected: Linux / hybrid ISO  ->  DD mode"

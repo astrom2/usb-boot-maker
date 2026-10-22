@@ -15,7 +15,7 @@ A single-file Windows tool for making a bootable USB from an ISO or IMG image, e
 - واجهة رسومية تسحب لها ملف الـ ISO أو IMG وتفلته.
 - تعرض الفلاشات USB فقط، وما تعرض الأقراص الداخلية أبداً.
 - تعرف نوع الصورة لحالها وتختار طريقة الحرق:
-  - **ويندوز:** فورمات FAT32 أو NTFS، ثم نسخ الملفات. إذا كان ملف `install.wim` أكبر من 4GB تقسّمه تلقائياً بأداة DISM.
+  - **ويندوز:** تختار نوع التقسيم **MBR** (يشتغل مع BIOS و UEFI) أو **GPT** (UEFI فقط)، ونظام الملفات FAT32 أو NTFS، وبعدها تنسخ الملفات. إذا كان ملف `install.wim` أكبر من 4GB تقسّمه تلقائياً بأداة DISM.
   - **لينكس وصور IMG:** كتابة خام (DD) قطاع بقطاع، مثل Rufus DD و balenaEtcher.
 - تطلب تأكيد قبل ما تمسح أي شي، وتتحقق مرة ثانية أن القرص USB وأنه مو قرص النظام.
 
@@ -37,7 +37,7 @@ A single-file Windows tool for making a bootable USB from an ISO or IMG image, e
 - A drag-and-drop window for choosing the ISO or IMG file.
 - Only USB disks are listed. Internal and system disks never appear.
 - The image type is detected automatically and the matching write mode is selected:
-  - **Windows mode:** the USB is formatted as FAT32 (UEFI + Legacy) or NTFS (Legacy/CSM), then the ISO files are copied. When `install.wim` is larger than 4 GB, it is split with DISM automatically.
+  - **Windows mode:** you choose the partition scheme, **MBR** (BIOS + UEFI) or **GPT** (UEFI only), and the file system, FAT32 (UEFI + Legacy) or NTFS (Legacy/CSM, MBR only). The ISO files are then copied. When `install.wim` is larger than 4 GB, it is split with DISM automatically.
   - **DD mode:** used for Linux hybrid ISOs and `.img` files. The image is written raw, sector by sector, the same way as Rufus DD mode or balenaEtcher.
 - The tool asks for confirmation before erasing anything. Right before writing, it re-checks that the target is a USB disk, that it is not the system disk, and that it is still the same drive you selected.
 
